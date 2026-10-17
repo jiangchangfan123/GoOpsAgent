@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 type ToolResult struct {
@@ -81,4 +82,24 @@ func checkType(expected string, val any) error {
 		}
 	}
 	return nil
+}
+
+// SuccessResult 快捷构造成功结果
+func SuccessResult(data any, source string, duration time.Duration) ToolResult {
+	return ToolResult{
+		Status:     "success",
+		Data:       data,
+		Source:     source,
+		DurationMs: duration.Milliseconds(),
+	}
+}
+
+// ErrorResult 快捷构造错误结果
+func ErrorResult(errorCode, message string, duration time.Duration) ToolResult {
+	return ToolResult{
+		Status:     "error",
+		ErrorCode:  errorCode,
+		Message:    message,
+		DurationMs: duration.Milliseconds(),
+	}
 }
