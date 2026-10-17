@@ -28,6 +28,9 @@ func main() {
 		"log_level", cfg.Log.Level,
 	)
 
+	//初始化LLM客户端
+	httpserver.InitChatClient(cfg.LLM)
+
 	// 创建 HTTP 服务
 	server := httpserver.NewServer(
 		cfg.Server.Port,
