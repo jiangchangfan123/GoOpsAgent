@@ -8,39 +8,40 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/goopsagent/goopsagent/internal/agent"
 	"github.com/goopsagent/goopsagent/internal/agent/provider"
-	"github.com/goopsagent/goopsagent/internal/config"
 	"github.com/goopsagent/goopsagent/internal/middleware"
+	"github.com/goopsagent/goopsagent/internal/tools"
 )
 
 type Server struct {
-	httpServer *http.Server
-	port       int
+	httpServer   *http.Server
+	port         int
+	orchestrator *agent.Orchestrator
+	registry     *tools.Registry
 }
 
 // chatClient 全局 LLM 客户端（阶段 1 简单用全局变量，后续阶段重构为依赖注入）
 var chatClient *provider.Client
 
-// InitChatClient 初始化 LLM 客户端，在 main.go 中调用
-func InitChatClient(cfg config.LLMConfig) {
-	chatClient = provider.NewClient(provider.Config{
-		APIKey:    cfg.APIKey,
-		BaseURL:   cfg.BaseURL,
-		Model:     cfg.Model,
-		Timeout:   cfg.Timeout,
-		MaxTokens: cfg.MaxTokens,
-	})
+// InitChatClientFromClient 使用已创建的 LLM 客户端初始化
+func InitChatClientFromClient(client *provider.Client) {
+	chatClient = client
 }
 
 // 创建http服务
-func NewServer(port int, readTimeout, writeTimeout time.Duration) *Server {
+func NewServer(port int, readTimeout, writeTimeout time.Duration, orch *agent.Orchestrator, reg *tools.Registry) *Server {
 	mux := http.NewServeMux()
 
-	// 注册路由
+	// 健康检查
 	mux.HandleFunc("GET /api/v1/health/live", handleLive)
 	mux.HandleFunc("GET /api/v1/health/ready", handleReady)
-	mux.HandleFunc("POST /api/v1/chat", handleChat)
 
+	// 聊天和 Agent 任务
+	mux.HandleFunc("POST /api/v1/chat", handleChat)
+	mux.HandleFunc("POST /api/v1/tasks", func(w http.ResponseWriter, r *http.Request) {
+		handleCreateTask(orch, w, r)
+	})
 	//中间件链
 	var handler http.Handler = mux
 	handler = middleware.RequestID(handler)
@@ -49,7 +50,9 @@ func NewServer(port int, readTimeout, writeTimeout time.Duration) *Server {
 	handler = middleware.Auth(handler)
 
 	return &Server{
-		port: port,
+		port:         port,
+		orchestrator: orch,
+		registry:     reg,
 		httpServer: &http.Server{
 			Addr:         fmt.Sprintf(":%d", port),
 			Handler:      handler,
@@ -117,6 +120,30 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// 创建并执行agent任务
+func handleCreateTask(orch *agent.Orchestrator, w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Message string `json:"message"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.Message == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "message is required"})
+		return
+	}
+
+	result, err := orch.Run(r.Context(), req.Message)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }
 
 func writeJSON(w http.ResponseWriter, code int, data any) {

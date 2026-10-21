@@ -1,4 +1,4 @@
-package server
+package main
 
 import (
 	"context"
@@ -8,7 +8,10 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/goopsagent/goopsagent/internal/agent"
+	"github.com/goopsagent/goopsagent/internal/agent/provider"
 	"github.com/goopsagent/goopsagent/internal/config"
+	"github.com/goopsagent/goopsagent/internal/tools"
 	httpserver "github.com/goopsagent/goopsagent/internal/transport/http"
 )
 
@@ -28,14 +31,37 @@ func main() {
 		"log_level", cfg.Log.Level,
 	)
 
-	//初始化LLM客户端
-	httpserver.InitChatClient(cfg.LLM)
+	// 创建 LLM 客户端
+	llmClient := provider.NewClient(provider.Config{
+		APIKey:    cfg.LLM.APIKey,
+		BaseURL:   cfg.LLM.BaseURL,
+		Model:     cfg.LLM.Model,
+		Timeout:   cfg.LLM.Timeout,
+		MaxTokens: cfg.LLM.MaxTokens,
+	})
+
+	// 注入到 HTTP 层（为聊天接口使用）
+	httpserver.InitChatClientFromClient(llmClient)
+
+	// 初始化工具注册中心
+	registry := tools.NewRegistry()
+	tools.RegisterDemoTools(registry)
+
+	// 创建编排器
+	orch := agent.NewOrchestrator(llmClient, registry, agent.Policy{
+		MaxIterations: cfg.Agent.MaxIterations,
+		MaxToolCalls:  cfg.Agent.MaxToolCalls,
+		TaskTimeout:   cfg.Agent.TaskTimeout,
+		ToolTimeout:   cfg.Agent.ToolTimeout,
+	})
 
 	// 创建 HTTP 服务
 	server := httpserver.NewServer(
 		cfg.Server.Port,
 		cfg.Server.ReadTimeout,
 		cfg.Server.WriteTimeout,
+		orch,
+		registry,
 	)
 
 	//监听退出信号
