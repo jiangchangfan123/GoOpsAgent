@@ -12,6 +12,7 @@ import (
 	"github.com/goopsagent/goopsagent/internal/agent/provider"
 	"github.com/goopsagent/goopsagent/internal/config"
 	"github.com/goopsagent/goopsagent/internal/tools"
+	k8stools "github.com/goopsagent/goopsagent/internal/tools/k8s"
 	httpserver "github.com/goopsagent/goopsagent/internal/transport/http"
 )
 
@@ -46,6 +47,25 @@ func main() {
 	// 初始化工具注册中心
 	registry := tools.NewRegistry()
 	tools.RegisterDemoTools(registry)
+
+	// 初始化 K8s 客户端（可选，K8s 模式为空时跳过）
+	if cfg.Kubernetes.Mode != "" {
+		k8sClient, err := k8stools.NewClient(k8stools.ClientConfig{
+			Mode:               cfg.Kubernetes.Mode,
+			KubeconfigPath:     cfg.Kubernetes.KubeconfigPath,
+			Timeout:            cfg.Kubernetes.DefaultTimeout,
+			NamespaceWhitelist: cfg.Kubernetes.NamespaceWhitelist,
+		})
+		if err != nil {
+			slog.Warn("failed to create k8s client, k8s tools disabled", "error", err)
+		} else {
+			k8stools.RegisterPodTools(registry, k8sClient)
+			k8stools.RegisterDeploymentTools(registry, k8sClient)
+			k8stools.RegisterEventTools(registry, k8sClient)
+			k8stools.RegisterLogTools(registry, k8sClient)
+			slog.Info("k8s tools registered")
+		}
+	}
 
 	// 创建编排器
 	orch := agent.NewOrchestrator(llmClient, registry, agent.Policy{

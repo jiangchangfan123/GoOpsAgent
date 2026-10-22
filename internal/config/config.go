@@ -48,7 +48,9 @@ type AgentConfig struct {
 }
 
 type KubernetesConfig struct {
-	KubeConfig         string
+	Mode               string
+	KubeconfigPath     string
+	DefaultTimeout     time.Duration
 	NamespaceWhitelist []string
 }
 
@@ -91,9 +93,11 @@ func Load() (*Config, error) {
 			ToolTimeout:   getEnvDuration("GOOPSAGENT_AGENT_TOOL_TIMEOUT", 30*time.Second),
 		},
 		Kubernetes: KubernetesConfig{
-			KubeConfig: getEnv("GOOPSAGENT_K8S_KUBECONFIG", ""),
+			Mode:           getEnv("GOOPSAGENT_K8S_MODE", ""),
+			KubeconfigPath: getEnv("GOOPSAGENT_K8S_KUBECONFIG_PATH", ""),
+			DefaultTimeout: getEnvDuration("GOOPSAGENT_K8S_DEFAULT_TIMEOUT", 10*time.Second),
 			NamespaceWhitelist: parseNamespaceWhitelist(
-				getEnv("GOOPSAGENT_K8S_NAMESPACE_WHITELIST", "default"),
+				getEnv("GOOPSAGENT_K8S_NAMESPACE_WHITELIST", ""),
 			),
 		},
 		Redis: RedisConfig{
