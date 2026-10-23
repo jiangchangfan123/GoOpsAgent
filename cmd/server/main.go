@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,9 +12,11 @@ import (
 	"github.com/goopsagent/goopsagent/internal/agent"
 	"github.com/goopsagent/goopsagent/internal/agent/provider"
 	"github.com/goopsagent/goopsagent/internal/config"
+	"github.com/goopsagent/goopsagent/internal/store"
 	"github.com/goopsagent/goopsagent/internal/tools"
 	k8stools "github.com/goopsagent/goopsagent/internal/tools/k8s"
 	httpserver "github.com/goopsagent/goopsagent/internal/transport/http"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -44,7 +47,47 @@ func main() {
 	// 注入到 HTTP 层（为聊天接口使用）
 	httpserver.InitChatClientFromClient(llmClient)
 
-	// 初始化工具注册中心
+	// ---- 初始化数据层 ----
+	var (
+		db  *sql.DB
+		rdb *goredis.Client
+		st  *store.Store
+	)
+
+	// 尝试连接 MySQL（可选，DSN 为空则跳过）
+	if cfg.Database.DSN != "" {
+		var err error
+		db, err = store.NewDB(
+			cfg.Database.DSN,
+			cfg.Database.MaxOpenConns,
+			cfg.Database.MaxIdleConns,
+			cfg.Database.ConnMaxLifetime,
+		)
+		if err != nil {
+			slog.Warn("mysql unavailable, running without persistence", "error", err)
+			db = nil
+		} else {
+			defer db.Close()
+			slog.Info("mysql ready")
+		}
+	}
+
+	// 尝试连接 Redis（可选，地址为空则跳过）
+	if cfg.Redis.Addr != "" {
+		var err error
+		rdb, err = store.NewRedis(cfg.Redis.Addr, cfg.Redis.Password)
+		if err != nil {
+			slog.Warn("redis unavailable", "error", err)
+			rdb = nil
+		}
+	}
+
+	// 创建统一数据层（DB 或 Redis 任一可用即创建；都为空时 st 为 nil）
+	if db != nil || rdb != nil {
+		st = store.New(db, rdb)
+	}
+
+	// ---- 初始化工具注册中心 ----
 	registry := tools.NewRegistry()
 	tools.RegisterDemoTools(registry)
 
@@ -82,6 +125,7 @@ func main() {
 		cfg.Server.WriteTimeout,
 		orch,
 		registry,
+		st,
 	)
 
 	//监听退出信号

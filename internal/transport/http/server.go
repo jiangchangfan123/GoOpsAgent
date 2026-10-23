@@ -11,6 +11,7 @@ import (
 	"github.com/goopsagent/goopsagent/internal/agent"
 	"github.com/goopsagent/goopsagent/internal/agent/provider"
 	"github.com/goopsagent/goopsagent/internal/middleware"
+	"github.com/goopsagent/goopsagent/internal/store"
 	"github.com/goopsagent/goopsagent/internal/tools"
 )
 
@@ -19,6 +20,7 @@ type Server struct {
 	port         int
 	orchestrator *agent.Orchestrator
 	registry     *tools.Registry
+	store        *store.Store
 }
 
 // chatClient 全局 LLM 客户端（阶段 1 简单用全局变量，后续阶段重构为依赖注入）
@@ -30,7 +32,7 @@ func InitChatClientFromClient(client *provider.Client) {
 }
 
 // 创建http服务
-func NewServer(port int, readTimeout, writeTimeout time.Duration, orch *agent.Orchestrator, reg *tools.Registry) *Server {
+func NewServer(port int, readTimeout, writeTimeout time.Duration, orch *agent.Orchestrator, reg *tools.Registry, st *store.Store) *Server {
 	mux := http.NewServeMux()
 
 	// 健康检查
@@ -43,7 +45,7 @@ func NewServer(port int, readTimeout, writeTimeout time.Duration, orch *agent.Or
 		handleCreateTask(orch, w, r)
 	})
 	mux.HandleFunc("POST /api/v1/stream", func(w http.ResponseWriter, r *http.Request) {
-		handleStreamTask(orch, w, r)
+		handleStreamTask(orch, st, w, r)
 	})
 
 	//中间件链
@@ -57,6 +59,7 @@ func NewServer(port int, readTimeout, writeTimeout time.Duration, orch *agent.Or
 		port:         port,
 		orchestrator: orch,
 		registry:     reg,
+		store:        st,
 		httpServer: &http.Server{
 			Addr:         fmt.Sprintf(":%d", port),
 			Handler:      handler,
