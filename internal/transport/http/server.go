@@ -42,6 +42,10 @@ func NewServer(port int, readTimeout, writeTimeout time.Duration, orch *agent.Or
 	mux.HandleFunc("POST /api/v1/tasks", func(w http.ResponseWriter, r *http.Request) {
 		handleCreateTask(orch, w, r)
 	})
+	mux.HandleFunc("POST /api/v1/stream", func(w http.ResponseWriter, r *http.Request) {
+		handleStreamTask(orch, w, r)
+	})
+
 	//中间件链
 	var handler http.Handler = mux
 	handler = middleware.RequestID(handler)
