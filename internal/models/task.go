@@ -57,6 +57,12 @@ type Message struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ChatMessage Redis 缓存的通用消息格式（和 provider.ChatMessage 对应）
+type ChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 // SSEEvent SSE 推送的事件结构
 type SSEEvent struct {
 	Type string `json:"type"` // status / content / tool_call / tool_result / error / done
