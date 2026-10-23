@@ -25,5 +25,10 @@ func BuildSystemPrompt(toolDefs []tools.ToolDef) string {
 		sb.WriteString(fmt.Sprintf("- %s：%s\n", td.Name, td.Description))
 	}
 
+	sb.WriteString("\n当你完成所有排查后，必须在最终回复中输出一个 JSON 格式的诊断报告，")
+	sb.WriteString("字段包括：summary（一句话摘要）、root_cause（根因分析）、confidence（high/medium/low）、")
+	sb.WriteString("evidence（数组，每项含 source/content/relevance）、suggestions（建议操作列表）。")
+	sb.WriteString("如果信息不足以确定根因，confidence 设为 low 并在 summary 中说明。")
+
 	return sb.String()
 }

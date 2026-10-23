@@ -10,7 +10,9 @@ import (
 
 	"github.com/goopsagent/goopsagent/internal/agent"
 	"github.com/goopsagent/goopsagent/internal/agent/provider"
+	"github.com/goopsagent/goopsagent/internal/diagnostics"
 	"github.com/goopsagent/goopsagent/internal/middleware"
+	"github.com/goopsagent/goopsagent/internal/models"
 	"github.com/goopsagent/goopsagent/internal/store"
 	"github.com/goopsagent/goopsagent/internal/tools"
 )
@@ -46,6 +48,14 @@ func NewServer(port int, readTimeout, writeTimeout time.Duration, orch *agent.Or
 	})
 	mux.HandleFunc("POST /api/v1/stream", func(w http.ResponseWriter, r *http.Request) {
 		handleStreamTask(orch, st, w, r)
+	})
+
+	// 任务查询与诊断报告（store 可能为 nil，通过闭包透传）
+	mux.HandleFunc("GET /api/v1/tasks/{id}", func(w http.ResponseWriter, r *http.Request) {
+		handleGetTask(st, w, r)
+	})
+	mux.HandleFunc("GET /api/v1/tasks/{id}/report", func(w http.ResponseWriter, r *http.Request) {
+		handleGetReport(st, w, r)
 	})
 
 	//中间件链
@@ -157,4 +167,58 @@ func writeJSON(w http.ResponseWriter, code int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(data)
+}
+
+// handleGetTask 按 ID 查询任务
+func handleGetTask(st *store.Store, w http.ResponseWriter, r *http.Request) {
+	if st == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "store not available"})
+		return
+	}
+
+	taskID := r.PathValue("id")
+	if taskID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "task id is required"})
+		return
+	}
+
+	task, err := st.GetTask(taskID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, task)
+}
+
+// handleGetReport 生成诊断报告
+func handleGetReport(st *store.Store, w http.ResponseWriter, r *http.Request) {
+	if st == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "store not available"})
+		return
+	}
+
+	taskID := r.PathValue("id")
+	if taskID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "task id is required"})
+		return
+	}
+
+	task, err := st.GetTask(taskID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// 任务尚未完成时不能生成报告
+	if task.Status != models.TaskStatusSucceeded {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error":  "task not completed yet",
+			"status": string(task.Status),
+		})
+		return
+	}
+
+	report := diagnostics.BuildReport(task)
+	writeJSON(w, http.StatusOK, report)
 }
