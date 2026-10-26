@@ -7,14 +7,21 @@ import (
 	"log/slog"
 
 	"github.com/goopsagent/goopsagent/internal/agent/provider"
+	"github.com/goopsagent/goopsagent/internal/knowledge"
 	"github.com/goopsagent/goopsagent/internal/models"
 	"github.com/goopsagent/goopsagent/internal/tools"
 )
 
+// Retriever RAG 检索器接口（避免循环依赖）
+type Retriever interface {
+	Search(query string, topK int, phaseFilter string) []knowledge.SearchResult
+}
+
 type Orchestrator struct {
-	llm      *provider.Client
-	registry *tools.Registry
-	policy   Policy
+	llm       *provider.Client
+	registry  *tools.Registry
+	policy    Policy
+	retriever Retriever
 }
 
 // ToolCall 模型发出的工具调用请求
@@ -45,6 +52,11 @@ func NewOrchestrator(llm *provider.Client, registry *tools.Registry, policy Poli
 	}
 }
 
+// SetRetriever 注入 RAG 检索器（可选，不注入则不用 RAG）
+func (o *Orchestrator) SetRetriever(r Retriever) {
+	o.retriever = r
+}
+
 type RunResponse = RunResult
 
 // Run 执行 Agent 任务，返回最终回复和工具调用记录
@@ -54,7 +66,7 @@ func (o *Orchestrator) Run(ctx context.Context, userMessage string) (*RunResult,
 	messages := []provider.ChatMessage{
 		{
 			Role:    "system",
-			Content: BuildSystemPrompt(o.registry.ToToolDefs()),
+			Content: BuildSystemPromptWithRAG(o.registry.ToToolDefs(), o.retrieveKnowledge(userMessage)),
 		},
 		{
 			Role:    "user",
@@ -200,6 +212,14 @@ func (o *Orchestrator) executeTool(ctx context.Context, tracker *ExecutionTracke
 }
 
 // finalResult 构造最终结果（异常终止时）
+// retrieveKnowledge 执行 RAG 检索（如果 Retriever 未注入则返回 nil）
+func (o *Orchestrator) retrieveKnowledge(query string) []knowledge.SearchResult {
+	if o.retriever == nil {
+		return nil
+	}
+	return o.retriever.Search(query, 3, "")
+}
+
 func (o *Orchestrator) finalResult(messages []provider.ChatMessage, toolRuns []ToolRunRecord, err error) (*RunResult, error) {
 	if len(messages) > 0 {
 		last := messages[len(messages)-1]
@@ -224,7 +244,7 @@ func (o *Orchestrator) RunStreaming(ctx context.Context, userMessage string, eve
 	}
 
 	messages := []provider.ChatMessage{
-		{Role: "system", Content: BuildSystemPrompt(o.registry.ToToolDefs())},
+		{Role: "system", Content: BuildSystemPromptWithRAG(o.registry.ToToolDefs(), o.retrieveKnowledge(userMessage))},
 		{Role: "user", Content: userMessage},
 	}
 

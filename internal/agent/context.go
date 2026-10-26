@@ -4,11 +4,17 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/goopsagent/goopsagent/internal/knowledge"
 	"github.com/goopsagent/goopsagent/internal/tools"
 )
 
-// BuildSystemPrompt 构造系统提示词
+// BuildSystemPrompt 构造系统提示词（无 RAG）
 func BuildSystemPrompt(toolDefs []tools.ToolDef) string {
+	return BuildSystemPromptWithRAG(toolDefs, nil)
+}
+
+// BuildSystemPromptWithRAG 构造系统提示词（带 RAG 上下文）
+func BuildSystemPromptWithRAG(toolDefs []tools.ToolDef, ragResults []knowledge.SearchResult) string {
 	var sb strings.Builder
 
 	sb.WriteString("你是一个 Kubernetes 运维助手。")
@@ -18,7 +24,22 @@ func BuildSystemPrompt(toolDefs []tools.ToolDef) string {
 	sb.WriteString("2. 每次只调用一个工具。\n")
 	sb.WriteString("3. 分析工具返回的数据后再给结论。\n")
 	sb.WriteString("4. 如果工具返回错误，如实告知用户。\n")
-	sb.WriteString("5. 区分事实和推断：引用工具返回的具体数据作为证据。\n\n")
+	sb.WriteString("5. 区分事实和推断：引用工具返回的具体数据作为证据。\n")
+
+	// RAG 上下文：注入检索到的相关知识
+	if len(ragResults) > 0 {
+		sb.WriteString("\n=== 参考知识库 ===\n")
+		sb.WriteString("以下是从 Kubernetes 故障排查知识库中检索到的相关内容，")
+		sb.WriteString("请优先参考这些知识进行诊断：\n\n")
+		for i, r := range ragResults {
+			sb.WriteString(fmt.Sprintf("【参考 %d】(相似度 %.0f%%)\n", i+1, r.Similarity*100))
+			sb.WriteString(r.Chunk.Content)
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString("=== 知识库引用结束 ===\n\n")
+		sb.WriteString("注意：以上知识库内容仅供参考。你必须结合实际集群数据（通过工具获取）")
+		sb.WriteString("来验证和修正诊断结论。当知识库建议与集群实际状态不一致时，以集群实际数据为准。\n\n")
+	}
 
 	sb.WriteString("可用工具：\n")
 	for _, td := range toolDefs {

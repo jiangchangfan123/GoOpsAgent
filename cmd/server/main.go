@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/goopsagent/goopsagent/internal/agent"
 	"github.com/goopsagent/goopsagent/internal/agent/provider"
 	"github.com/goopsagent/goopsagent/internal/config"
+	"github.com/goopsagent/goopsagent/internal/knowledge"
 	"github.com/goopsagent/goopsagent/internal/store"
 	"github.com/goopsagent/goopsagent/internal/tools"
 	k8stools "github.com/goopsagent/goopsagent/internal/tools/k8s"
@@ -117,6 +119,46 @@ func main() {
 		TaskTimeout:   cfg.Agent.TaskTimeout,
 		ToolTimeout:   cfg.Agent.ToolTimeout,
 	})
+
+	// ---- 初始化 RAG 知识检索器 ----
+	// 尝试加载索引文件；不存在时跳过，Agent 不需要 RAG
+	indexPath := os.Getenv("GOOPSAGENT_KNOWLEDGE_INDEX")
+	if indexPath == "" {
+		indexPath = "internal/knowledge/index.json"
+	}
+	if data, err := os.ReadFile(indexPath); err == nil {
+		slog.Info("loading knowledge index", "path", indexPath)
+		var index struct {
+			Chunks []knowledge.Chunk `json:"chunks"`
+		}
+		if err := json.Unmarshal(data, &index); err == nil && len(index.Chunks) > 0 {
+			// 训练 Embedder
+			emb := knowledge.NewEmbedder()
+			corpus := make([]string, len(index.Chunks))
+			for i, c := range index.Chunks {
+				corpus[i] = c.Content
+			}
+			emb.Fit(corpus)
+
+			// 创建检索器
+			retriever := knowledge.NewRetriever(emb, knowledge.RetrieverConfig{
+				MaxResults: 3,
+				MinScore:   0.2,
+			})
+			retriever.Index(index.Chunks)
+
+			// 注入 Orchestrator
+			orch.SetRetriever(retriever)
+			slog.Info("rag retriever ready", "chunks", len(index.Chunks), "vocab", emb.Dim())
+		} else {
+			slog.Info("knowledge index empty, skipping RAG", "path", indexPath)
+		}
+	} else {
+		slog.Info("knowledge index not found, skipping RAG",
+			"path", indexPath,
+			"tip", "run: go run cmd/ingest/main.go knowledge/ internal/knowledge/index.json",
+		)
+	}
 
 	// 创建 HTTP 服务
 	server := httpserver.NewServer(
